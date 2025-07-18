@@ -1,0 +1,12 @@
+
+{% extends "base.html" %}
+{% block content %}
+<a href="{{ url_for('create_event') }}" class="btn btn-primary mb-3">Create New Event</a>
+{% for event in events %}
+<div class="card mb-2 p-3">
+    <h5>{{ event.name }}</h5>
+    <a href="{{ url_for('register', event_id=event.id) }}" class="btn btn-success btn-sm">Register</a>
+    <a href="{{ url_for('view_registrations', event_id=event.id) }}" class="btn btn-info btn-sm">View Registrations</a>
+</div>
+{% endfor %}
+{% endblock %}

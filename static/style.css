@@ -1,0 +1,13 @@
+
+body {
+    background-color: #FAF9F6;
+    font-family: 'Segoe UI', sans-serif;
+    color: #333;
+}
+h1 {
+    color: #6A1B1A;
+}
+.btn-primary {
+    background-color: #6A1B1A;
+    border-color: #6A1B1A;
+}
