@@ -10,9 +10,9 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['SECRET_KEY'] = 'secret123'
 db.init_app(app)
 
-@app.before_first_request
-def create_tables():
+with app.app_context():
     db.create_all()
+
 
 @app.route('/')
 def index():
