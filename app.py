@@ -1,102 +1,66 @@
-import os
+
+from flask import Flask, render_template, request, redirect, url_for
+from models import db, Event, Field, Registration
 from datetime import datetime
-from flask import Flask, request, jsonify, abort, render_template, redirect, url_for, flash
-from flask_sqlalchemy import SQLAlchemy
+import json
 
 app = Flask(__name__)
-app.secret_key = os.getenv("SECRET_KEY", "dev")
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///data/events.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+app.config['SECRET_KEY'] = 'secret123'
+db.init_app(app)
 
-app.config["SQLALCHEMY_DATABASE_URI"] = os.getenv(
-    "DATABASE_URL",
-    "sqlite:///local.db"
-)
-app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+@app.before_first_request
+def create_tables():
+    db.create_all()
 
-db = SQLAlchemy(app)
+@app.route('/')
+def index():
+    today = datetime.today().date()
+    events = Event.query.filter(Event.reg_start <= today, Event.reg_end >= today).all()
+    return render_template('index.html', events=events)
 
-class Event(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    name = db.Column(db.String(150), nullable=False)
-    registration_start = db.Column(db.DateTime, nullable=False)
-    registration_end = db.Column(db.DateTime, nullable=False)
+@app.route('/event/new', methods=['GET', 'POST'])
+def create_event():
+    if request.method == 'POST':
+        name = request.form['name']
+        reg_start = request.form['reg_start']
+        reg_end = request.form['reg_end']
+        field_names = request.form.getlist('field_name[]')
+        event = Event(name=name, reg_start=reg_start, reg_end=reg_end)
+        db.session.add(event)
+        db.session.commit()
+        for field in field_names:
+            db.session.add(Field(event_id=event.id, name=field))
+        db.session.commit()
+        return redirect(url_for('index'))
+    return render_template('create_event.html')
 
-class Registration(db.Model):
-    id = db.Column(db.Integer, primary_key=True)
-    event_id = db.Column(db.Integer, db.ForeignKey('event.id'), nullable=False)
-    registrant_name = db.Column(db.String(100), nullable=False)
-    registrant_email = db.Column(db.String(120), nullable=False)
-    paid = db.Column(db.Boolean, default=False)
-    timestamp = db.Column(db.DateTime, default=datetime.utcnow)
-
-    event = db.relationship('Event', backref=db.backref('registrations', lazy=True))
-
-@app.route("/")
-def home():
-    events = Event.query.order_by(Event.registration_start).all()
-    return render_template("events.html", events=events)
-
-@app.route("/events/<int:event_id>/register", methods=["GET", "POST"])
+@app.route('/event/<int:event_id>/register', methods=['GET', 'POST'])
 def register(event_id):
     event = Event.query.get_or_404(event_id)
-    now = datetime.utcnow()
-    if not (event.registration_start <= now <= event.registration_end):
-        flash("Registration is closed for this event.", "danger")
-        return redirect(url_for("home"))
-
-    if request.method == "POST":
-        name = request.form.get("name")
-        email = request.form.get("email")
-        if not name or not email:
-            flash("Please enter your name and email.", "warning")
-            return render_template("register.html", event=event)
-
-        registration = Registration(
-            event_id=event.id,
-            registrant_name=name,
-            registrant_email=email,
-            paid=False
-        )
+    fields = Field.query.filter_by(event_id=event.id).all()
+    if request.method == 'POST':
+        data = {field.name: request.form.get(field.name) for field in fields}
+        registration = Registration(event_id=event.id, data=json.dumps(data), paid=False)
         db.session.add(registration)
         db.session.commit()
-        flash("Registration successful!", "success")
-        return redirect(url_for("registrations", event_id=event.id))
+        return "Registration submitted!"
+    return render_template('register.html', event=event, fields=fields)
 
-    return render_template("register.html", event=event)
-
-@app.route("/events/<int:event_id>/registrations")
-def registrations(event_id):
+@app.route('/event/<int:event_id>/registrations')
+def view_registrations(event_id):
     event = Event.query.get_or_404(event_id)
-    registrations = Registration.query.filter_by(event_id=event.id).order_by(Registration.timestamp.desc()).all()
-    return render_template("registrations.html", event=event, registrations=registrations)
+    registrations = Registration.query.filter_by(event_id=event.id).all()
+    fields = Field.query.filter_by(event_id=event.id).all()
+    return render_template('view_registrations.html', event=event, fields=fields, registrations=registrations)
 
-@app.route("/api/events", methods=["GET"])
-def api_list_events():
-    events = Event.query.all()
-    return jsonify(events=[{
-        "id": e.id,
-        "name": e.name,
-        "registration_start": e.registration_start.isoformat(),
-        "registration_end": e.registration_end.isoformat()
-    } for e in events])
-
-@app.route("/api/events", methods=["POST"])
-def api_create_event():
-    data = request.json
-    if not data:
-        abort(400, "Request must be JSON")
-    try:
-        event = Event(
-            name=data["name"],
-            registration_start=datetime.fromisoformat(data["registration_start"]),
-            registration_end=datetime.fromisoformat(data["registration_end"]),
-        )
-    except (KeyError, ValueError) as e:
-        abort(400, f"Missing or invalid data: {e}")
-    db.session.add(event)
+@app.route('/payment/<int:reg_id>/toggle')
+def toggle_payment(reg_id):
+    reg = Registration.query.get_or_404(reg_id)
+    reg.paid = not reg.paid
     db.session.commit()
-    return jsonify(message="Event created", event_id=event.id), 201
+    return redirect(url_for('view_registrations', event_id=reg.event_id))
 
-if __name__ == "__main__":
-    with app.app_context():
-        db.create_all()
+if __name__ == '__main__':
     app.run(debug=True)
